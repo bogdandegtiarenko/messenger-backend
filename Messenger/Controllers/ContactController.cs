@@ -7,6 +7,7 @@ using Messenger.Domain.Core.Responses;
 using Messenger.Hubs;
 using Microsoft.AspNetCore.SignalR;
 using Messenger.Domain.Core.DTOs;
+using Messenger.UserOnlineTracking;
 
 namespace Messenger.Controllers
 {
@@ -52,28 +53,24 @@ namespace Messenger.Controllers
 
             try
             {
-                ServiceResponse<bool> serviceResponse = (await _contactService.AddContact(userLogin, contactLogin));
-                bool isContactAdded = serviceResponse.Data;
-                if (isContactAdded)
+                ServiceResponse<bool> serviceResponse = await _contactService.AddContact(userLogin, contactLogin);
+                if (serviceResponse.Data)
                 {
-                    _userContacts[userLogin].Add(contactLogin);
+                    _userContacts.AddContact(userLogin, contactLogin);
 
                     ProfileDTO? contactProfile = (await _accountService.GetProfileByLogin(contactLogin)).Data;
                     ProfileDTO? userProfile = (await _accountService.GetProfileByLogin(userLogin)).Data;
                     
                     if (_userLoginsOnline.Contains(contactLogin))
                     {
-                        if (_userOnlineContacts.ContainsKey(userLogin))
-                        {
-                            _userContacts[contactLogin].Add(userLogin);
+                        _userContacts.AddContact(contactLogin, userLogin);
 
-                            _userOnlineContacts[userLogin].Add(contactLogin);
-                            _userOnlineContacts[contactLogin].Add(userLogin);
-                        }
+                        _userOnlineContacts.AddOnlineContact(userLogin, contactLogin);
+                        _userOnlineContacts.AddOnlineContact(contactLogin, userLogin);
 
                         if(contactLogin != userLogin)
                         {
-                            await _hubContext.Clients.Clients(_userConnections[contactLogin])
+                            await _hubContext.Clients.Clients(_userConnections.GetConnections(contactLogin))
                             .SendAsync("ReceiveNewContact", userProfile);
                         }
                     }
@@ -102,31 +99,22 @@ namespace Messenger.Controllers
 
             try
             {
-                ServiceResponse<bool> serviceResponse = (await _contactService.RemoveContact(userLogin, contactLogin));
-                bool isContactRemoved = serviceResponse.Data;
-                if (isContactRemoved)
+                ServiceResponse<bool> serviceResponse = await _contactService.RemoveContact(userLogin, contactLogin);
+                if (serviceResponse.Data)
                 {
-                    _userContacts[userLogin].Remove(contactLogin);
+                    _userContacts.RemoveContact(userLogin, contactLogin);
 
                     if(_userLoginsOnline.Contains(contactLogin))
                     {
+                        _userContacts.RemoveContact(contactLogin, userLogin);
 
-                        if (_userOnlineContacts.ContainsKey(userLogin))
-                        {
-                            _userContacts[contactLogin].Remove(userLogin);
-
-                            _userOnlineContacts[userLogin].Remove(contactLogin);
-                            _userOnlineContacts[contactLogin].Remove(userLogin);
-                        }
-
+                        _userOnlineContacts.RemoveOnlineContact(userLogin, contactLogin);
+                        _userOnlineContacts.RemoveOnlineContact(contactLogin, userLogin);
 
                         if(contactLogin != userLogin)
                         {
-                            await _hubContext.Clients.Clients(_userConnections[contactLogin])
-                            .SendAsync("ReceiveRemovedContact", new
-                            {
-                                login = userLogin
-                            });
+                            await _hubContext.Clients.Clients(_userConnections.GetConnections(contactLogin))
+                            .SendAsync("ReceiveRemovedContact", new { login = userLogin });
                         }
                     }
 

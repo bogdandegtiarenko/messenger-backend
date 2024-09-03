@@ -13,7 +13,7 @@ using Messenger.Services.Implementations;
 using Messenger.DAL.Repositories;
 using Messenger.DAL.Interfaces;
 using Messenger.Hubs;
-using Messenger;
+using Messenger.UserOnlineTracking;
 
 
 var builder = WebApplication.CreateBuilder(args);

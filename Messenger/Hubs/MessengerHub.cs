@@ -1,5 +1,6 @@
 ﻿using Messenger.Domain.Core.DTOs.Authentication;
 using Messenger.Services.Interfaces;
+using Messenger.UserOnlineTracking;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.SignalR;
 using System.Text;
@@ -34,30 +35,27 @@ namespace Messenger.Hubs
 
         public async Task Connect(string userLogin)
         {
-            if (!_userConnections.ContainsKey(userLogin))
-            {
-                _userConnections[userLogin] = new List<string>();
-            }
+            _userConnections.AddConnection(userLogin, Context.ConnectionId);
 
-            _userConnections[userLogin].Add(Context.ConnectionId);
-
-            if (_userConnections[userLogin].Count == 1)
+            if (_userConnections.GetConnectionsCount(userLogin) == 1)
             {
                 List<string> contactLogins = (await _contactService.GetContactLogins(userLogin)).Data;
-                _userContacts[userLogin] = contactLogins;
-                _userLoginsOnline.Add(userLogin);
+                _userContacts.SetContacts(userLogin, contactLogins);
 
-                var onlineContacts = _userContacts[userLogin].Intersect(_userLoginsOnline).ToList();
-                _userOnlineContacts[userLogin] = onlineContacts;
+                _userLoginsOnline.AddLogin(userLogin);
+
+                var onlineContacts = contactLogins.Intersect(_userLoginsOnline.GetAllLogins()).ToList();
+
+                _userOnlineContacts.SetOnlineContacts(userLogin, onlineContacts);
 
                 foreach(var onlineContactLogin in onlineContacts)
                 {
-                    if (!_userOnlineContacts[onlineContactLogin].Contains(userLogin))
+                    if (!_userOnlineContacts.IsContactOnline(onlineContactLogin, userLogin))
                     {
-                        _userOnlineContacts[onlineContactLogin].Add(userLogin);
+                        _userOnlineContacts.AddOnlineContact(onlineContactLogin, userLogin);
                     }
 
-                    await Clients.Clients(_userConnections[onlineContactLogin]).SendAsync("ReceiveOnlineStatus", new
+                    await Clients.Clients(_userConnections.GetConnections(onlineContactLogin)).SendAsync("ReceiveOnlineStatus", new
                     {
                         login = userLogin,
                         onlineStatus = true
@@ -65,62 +63,40 @@ namespace Messenger.Hubs
                 }
             }
 
-            await PrintInfo("Connection");
+            await LogInfo("Connection");
         }
 
         public override async Task OnDisconnectedAsync(Exception? exception)
         {
             string userConnectionId = Context.ConnectionId;
+            string? login = _userConnections.GetLogin(userConnectionId);
+            _userConnections.RemoveConnection(login, userConnectionId);
 
-            foreach(var userConnection in _userConnections)
+            if (!_userConnections.ContainsUser(login))
             {
-                string login = userConnection.Key;
-                bool isRightUser = false;
-                
-                foreach(var connectionId in userConnection.Value)
-                {
-                    if(userConnectionId == connectionId)
-                    {
-                        userConnection.Value.Remove(connectionId);
-                        isRightUser = true;
-                        break;
-                    }
-                }
+                _userContacts.RemoveUser(login);
+                _userLoginsOnline.RemoveLogin(login);
 
-                if (isRightUser)
+                _userOnlineContacts.GetOnlineContacts(login).ForEach(async onlineContactLogin =>
                 {
-                    if(userConnection.Value.Count == 0)
+                    if (onlineContactLogin != login)
                     {
-                        _userContacts.Remove(login);
-                        _userLoginsOnline.Remove(login);
-
-                        _userOnlineContacts[login].ForEach(async onlineContactLogin =>
+                        _userOnlineContacts.RemoveOnlineContact(onlineContactLogin, login);
+                        await Clients.Clients(_userConnections.GetConnections(onlineContactLogin)).SendAsync("ReceiveOnlineStatus",
+                        new
                         {
-                            if(onlineContactLogin != login)
-                            {
-                                _userOnlineContacts[onlineContactLogin].Remove(login);
-
-                                await Clients.Clients(_userConnections[onlineContactLogin]).SendAsync("ReceiveOnlineStatus", 
-                                new
-                                {
-                                    login = login,
-                                    onlineStatus = false
-                                });
-                            }
+                            login = login,
+                            onlineStatus = false
                         });
-
-                        _userConnections.Remove(login);
-                        _userOnlineContacts.Remove(login);
                     }
-                    break;
-                }
+                });
 
+                _userOnlineContacts.RemoveUser(login);
             }
 
-            await PrintInfo("Disconnection");
+            await LogInfo("Disconnection");
             await base.OnDisconnectedAsync(exception);
         }
-
 
         public async Task CheckOnlineStatus(string contactLogin)
         {
@@ -131,39 +107,15 @@ namespace Messenger.Hubs
             });
         }
 
-        private async Task PrintInfo(string title)
+        private async Task LogInfo(string title)
         {
             StringBuilder builder = new StringBuilder();
-
             builder.AppendLine($"====================[{title}]====================");
-            builder.AppendLine("--------------------[_userConnection]--------------------");
 
-            foreach (var userConnection in _userConnections)
-            {
-                builder.AppendLine($"Login: {userConnection.Key}");
-                foreach (var connectionId in _userConnections[userConnection.Key])
-                {
-                    builder.AppendLine($" id: {connectionId}");
-                }
-            }
-
-            builder.AppendLine("--------------------[_userLoginsOnline]--------------------");
-
-            foreach (var login in _userLoginsOnline)
-            {
-                builder.AppendLine($"- {login}");
-            }
-
-            builder.AppendLine("--------------------[_userOnlineContacts]--------------------");
-
-            foreach (var loginToOnlineContacts in _userOnlineContacts)
-            {
-                builder.AppendLine($"UserLogin: {loginToOnlineContacts.Key}");
-                foreach (var login in loginToOnlineContacts.Value)
-                {
-                    builder.AppendLine($" ContactLogin: {login}");
-                }
-            }
+            _userConnections.LogConnections(_logger);
+            _userLoginsOnline.LogLoginsOnline(_logger);
+            _userOnlineContacts.LogOnlineContacts(_logger);
+            _userContacts.LogContacts(_logger);
 
             builder.AppendLine("=======================================================");
 

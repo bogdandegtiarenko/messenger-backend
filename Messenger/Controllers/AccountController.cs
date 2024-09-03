@@ -14,6 +14,7 @@ using Microsoft.AspNetCore.SignalR;
 using Messenger.Hubs;
 using Messenger.Domain.Core.DTOs.Authentication;
 using Messenger.Domain.Core.DTOs;
+using Messenger.UserOnlineTracking;
 
 namespace Messenger.Controllers
 {
@@ -134,30 +135,33 @@ namespace Messenger.Controllers
 
             try
             {
-                ServiceResponse<bool> response = (await _accountService.ChangeNickname(userLogin, newNickname));
-                bool isNicknameChanged = response.Data;
-                if (isNicknameChanged)
+                ServiceResponse<bool> response = await _accountService.ChangeNickname(userLogin, newNickname);
+                if (response.Data)
                 {
-                    if (_userOnlineContacts.ContainsKey(userLogin))
-                    {
-                        foreach (var onlineContact in _userOnlineContacts[userLogin])
-                        {
-                            await _hubContext.Clients.Clients(_userConnections[onlineContact])
-                                .SendAsync("ReceiveContactNickChange", new
-                                {
-                                    contactLogin = userLogin,
-                                    newNickname = newNickname,
-                                });
-                        }
-                    }
+                    await NotifyContactsAboutNicknameChange(userLogin, newNickname);
                     return Ok(response.Message);
                 }
-                else
-                    return BadRequest(response.Message);
+                return BadRequest(response.Message);
             }
-            catch(Exception ex)
+            catch (Exception ex)
             {
                 return BadRequest(ex.Message);
+            }
+        }
+
+        private async Task NotifyContactsAboutNicknameChange(string userLogin, string newNickname)
+        {
+            if (_userOnlineContacts.ContainsUser(userLogin))
+            {
+                foreach (var onlineContact in _userOnlineContacts.GetOnlineContacts(userLogin))
+                {
+                    await _hubContext.Clients.Clients(_userConnections.GetConnections(onlineContact))
+                        .SendAsync("ReceiveContactNickChange", new
+                        {
+                            contactLogin = userLogin,
+                            newNickname = newNickname,
+                        });
+                }
             }
         }
 

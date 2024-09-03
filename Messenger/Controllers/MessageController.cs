@@ -9,6 +9,8 @@ using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.SignalR;
 using System.Text.Json;
+using Messenger.UserOnlineTracking;
+using System.Collections.Generic;
 
 namespace Messenger.Controllers
 {
@@ -37,7 +39,6 @@ namespace Messenger.Controllers
             _userLoginsOnline = userLoginsOnline;
         }
 
-
         [Authorize]
         [HttpPost("AddMessage")]
         public async Task<IActionResult> AddMessage(ClientMessageForm messageForm)
@@ -48,7 +49,7 @@ namespace Messenger.Controllers
 
             try
             {
-                ServiceResponse<MessageActionDTO> serviceResponse = (await _messageService.AddMessage(messageForm));
+                ServiceResponse<MessageActionDTO> serviceResponse = await _messageService.AddMessage(messageForm);
 
                 if (serviceResponse.Status == Domain.Core.StatusCode.Success)
                 {
@@ -57,7 +58,7 @@ namespace Messenger.Controllers
                     {
                         string onlineContactLogin = messageForm.RecipientLogin;
 
-                        await _hubContext.Clients.Clients(_userConnections[onlineContactLogin])
+                        await _hubContext.Clients.Clients(_userConnections.GetConnections(onlineContactLogin))
                             .SendAsync("ReceiveMessage", new
                             {
                                 senderLogin = userLogin,
@@ -68,9 +69,9 @@ namespace Messenger.Controllers
                             });
                     }
 
-                    if (_userConnections.ContainsKey(messageForm.SenderLogin))
+                    if (_userConnections.ContainsUser(messageForm.SenderLogin))
                     {
-                        List<string> senderConnections = new List<string>(_userConnections[messageForm.SenderLogin]);
+                        List<string> senderConnections = _userConnections.GetConnections(messageForm.SenderLogin);
                         senderConnections.Remove(messageForm.SenderConnectionId);
 
                         if (senderConnections.Count >= 1)
@@ -108,7 +109,7 @@ namespace Messenger.Controllers
 
             try
             {
-                ServiceResponse<MessageActionDTO> serviceResponse = (await _messageService.EditMessage(messageForm, id));
+                ServiceResponse<MessageActionDTO> serviceResponse = await _messageService.EditMessage(messageForm, id);
 
                 if (serviceResponse.Status == Domain.Core.StatusCode.Success)
                     return Ok(serviceResponse.Data);
@@ -121,7 +122,6 @@ namespace Messenger.Controllers
             }
         }
 
-
         [Authorize]
         [HttpDelete("RemoveMessage")]
         public async Task<IActionResult> RemoveMessage(ClientMessageForm messageForm, int id)
@@ -132,7 +132,7 @@ namespace Messenger.Controllers
 
             try
             {
-                ServiceResponse<bool> serviceResponse = (await _messageService.RemoveMessage(messageForm, id));
+                ServiceResponse<bool> serviceResponse = await _messageService.RemoveMessage(messageForm, id);
                 bool isMessageRemoved = serviceResponse.Data;
                 if (isMessageRemoved)
                     return Ok("Message removed");
@@ -147,7 +147,7 @@ namespace Messenger.Controllers
 
         [Authorize]
         [HttpGet("GetChatMessages")]
-        public async Task<IActionResult> GetChatMessagese(string contactLogin)
+        public async Task<IActionResult> GetChatMessages(string contactLogin)
         {
             string? userLogin = User?.Identity?.Name;
             if (userLogin == null)
@@ -155,7 +155,7 @@ namespace Messenger.Controllers
 
             try
             {
-                var serviceResponse = (await _messageService.GetChatMessages(userLogin, contactLogin));
+                var serviceResponse = await _messageService.GetChatMessages(userLogin, contactLogin);
                 if(serviceResponse.Status == Domain.Core.StatusCode.Success)
                 {
                     List<MessageDTO>? messages = serviceResponse.Data;
